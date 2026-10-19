@@ -8,8 +8,96 @@ import 'package:url_launcher/url_launcher.dart';
 import 'api_service.dart';
 import 'offline_manager.dart';
 
+// ============================================================================
+// СЕРВІС КЕРУВАННЯ ЗБЛОКОВАНИМ ЕКРАНОМ (NOW PLAYING / LOCK SCREEN CONTROLS)
+// ============================================================================
+class NowPlayingService {
+  static const _channel = MethodChannel('com.tryzubmc.player/nowplaying');
+
+  static void init({
+    required VoidCallback onPlay,
+    required VoidCallback onPause,
+    required VoidCallback onToggle,
+    required VoidCallback onNext,
+    required VoidCallback onPrev,
+    required Function(double) onSeek,
+  }) {
+    _channel.setMethodCallHandler((call) async {
+      switch (call.method) {
+        case 'onRemotePlay':
+          onPlay();
+          break;
+        case 'onRemotePause':
+          onPause();
+          break;
+        case 'onRemoteToggle':
+          onToggle();
+          break;
+        case 'onRemoteNext':
+          onNext();
+          break;
+        case 'onRemotePrev':
+          onPrev();
+          break;
+        case 'onRemoteSeek':
+          final seconds = call.arguments as num? ?? 0;
+          onSeek(seconds.toDouble());
+          break;
+      }
+    });
+  }
+
+  static void update({
+    required String title,
+    required String artist,
+    required Duration duration,
+    required Duration position,
+    required bool isPlaying,
+  }) {
+    try {
+      _channel.invokeMethod('updateNowPlaying', {
+        'title': title,
+        'artist': artist,
+        'duration': duration.inSeconds.toDouble(),
+        'position': position.inSeconds.toDouble(),
+        'isPlaying': isPlaying,
+      });
+    } catch (_) {}
+  }
+
+  static void clear() {
+    try {
+      _channel.invokeMethod('clearNowPlaying');
+    } catch (_) {}
+  }
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Налаштування безперервного фонового аудіо на iOS та Android
+  try {
+    await AudioPlayer.global.setAudioContext(
+      AudioContext(
+        iOS: AudioContextIOS(
+          category: AVAudioSessionCategory.playback,
+          options: [
+            AVAudioSessionOptions.defaultToSpeaker,
+            AVAudioSessionOptions.allowAirPlay,
+            AVAudioSessionOptions.allowBluetooth,
+          ],
+        ),
+        android: AudioContextAndroid(
+          isSpeakerphoneOn: false,
+          stayAwake: true,
+          contentType: AndroidContentType.music,
+          usageType: AndroidUsageType.media,
+          audioFocus: AndroidAudioFocus.gain,
+        ),
+      ),
+    );
+  } catch (_) {}
+
   await ApiService.initSession();
   await OfflineManager.instance.init();
   runApp(const TryzubApp());
@@ -69,6 +157,8 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
   bool _isShuffle = false;
   bool _isRepeat = false;
 
+  bool _isTransitioning = false; // Захист від повторного виклику перемикання треку
+
   final Map<int, double> _offlineCacheProgress = {};
   final Map<int, double> _fileDownloadProgress = {};
 
@@ -76,6 +166,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
   void initState() {
     super.initState();
     _initAudioListeners();
+    _initLockScreenControls();
     _loadTracks();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -83,30 +174,83 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
     });
   }
 
+  void _initLockScreenControls() {
+    NowPlayingService.init(
+      onPlay: () {
+        if (_playerState != PlayerState.playing) _togglePlayPause();
+      },
+      onPause: () {
+        if (_playerState == PlayerState.playing) _togglePlayPause();
+      },
+      onToggle: _togglePlayPause,
+      onNext: _playNext,
+      onPrev: _playPrev,
+      onSeek: (seconds) {
+        _audioPlayer.seek(Duration(seconds: seconds.toInt()));
+      },
+    );
+  }
+
   void _initAudioListeners() {
+    _audioPlayer.setReleaseMode(ReleaseMode.stop);
+
     _audioPlayer.onPlayerStateChanged.listen((state) {
-      if (mounted) setState(() => _playerState = state);
+      if (!mounted) return;
+      setState(() => _playerState = state);
+      _syncLockScreen();
+
+      if (state == PlayerState.completed) {
+        _onTrackFinished();
+      }
     });
 
     _audioPlayer.onDurationChanged.listen((dur) {
-      if (mounted) setState(() => _duration = dur);
+      if (!mounted) return;
+      setState(() => _duration = dur);
+      _syncLockScreen();
     });
 
     _audioPlayer.onPositionChanged.listen((pos) {
-      if (mounted) setState(() => _position = pos);
+      if (!mounted) return;
+      setState(() => _position = pos);
     });
 
+    // Надійна підписка на завершення треку
     _audioPlayer.onPlayerComplete.listen((_) {
-      if (_isRepeat) {
-        if (_currentTrack != null) _playTrack(_currentTrack!);
-      } else {
-        _playNext();
-      }
+      _onTrackFinished();
     });
+  }
+
+  void _syncLockScreen() {
+    if (_currentTrack != null) {
+      NowPlayingService.update(
+        title: _currentTrack!.title,
+        artist: _currentTrack!.artist,
+        duration: _duration,
+        position: _position,
+        isPlaying: _playerState == PlayerState.playing,
+      );
+    }
+  }
+
+  void _onTrackFinished() {
+    if (_isTransitioning) return;
+    _isTransitioning = true;
+
+    Future.delayed(const Duration(milliseconds: 400), () {
+      _isTransitioning = false;
+    });
+
+    if (_isRepeat && _currentTrack != null) {
+      _playTrack(_currentTrack!);
+    } else {
+      _playNext();
+    }
   }
 
   @override
   void dispose() {
+    NowPlayingService.clear();
     _audioPlayer.dispose();
     super.dispose();
   }
@@ -162,6 +306,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
           volume: _volume,
         );
       }
+      _syncLockScreen();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -196,6 +341,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
     } else {
       await _audioPlayer.resume();
     }
+    _syncLockScreen();
   }
 
   void _playNext() {
@@ -856,6 +1002,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
                             ),
                           ),
                           child: ListTile(
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
                             leading: Stack(
                               alignment: Alignment.center,
                               children: [
@@ -863,12 +1010,12 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
                                   borderRadius: BorderRadius.circular(6),
                                   child: Image.network(
                                     track.coverUrl,
-                                    width: 48,
-                                    height: 48,
+                                    width: 46,
+                                    height: 46,
                                     fit: BoxFit.cover,
                                     errorBuilder: (_, __, ___) => Container(
-                                      width: 48,
-                                      height: 48,
+                                      width: 46,
+                                      height: 46,
                                       color: const Color(0xFF1E293B),
                                       child: const Icon(Icons.music_note_rounded, color: Colors.white54),
                                     ),
@@ -876,8 +1023,8 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
                                 ),
                                 if (isSelected)
                                   Container(
-                                    width: 48,
-                                    height: 48,
+                                    width: 46,
+                                    height: 46,
                                     decoration: BoxDecoration(
                                       color: Colors.black45,
                                       borderRadius: BorderRadius.circular(6),
@@ -889,48 +1036,58 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
                                   ),
                               ],
                             ),
+                            // 2 рядки для назви пісні, щоб довга назва ніколи не обрізалась!
                             title: Text(
                               track.title,
-                              maxLines: 1,
+                              maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                                fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
+                                fontSize: 13.5,
+                                height: 1.2,
                                 color: isSelected ? const Color(0xFF00BFFF) : Colors.white,
                               ),
                             ),
-                            subtitle: Row(
-                              children: [
-                                Text(
-                                  track.artist,
-                                  style: const TextStyle(color: Colors.white54, fontSize: 12),
-                                ),
-                                if (isSavedOffline) ...[
-                                  const SizedBox(width: 6),
-                                  const Icon(Icons.bolt_rounded, size: 14, color: Color(0xFFFFD700)),
-                                  const SizedBox(width: 2),
-                                  const Text('Офлайн', style: TextStyle(color: Color(0xFFFFD700), fontSize: 11, fontWeight: FontWeight.bold)),
+                            subtitle: Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child: Row(
+                                children: [
+                                  Text(
+                                    track.artist,
+                                    style: const TextStyle(color: Colors.white54, fontSize: 11),
+                                  ),
+                                  if (isSavedOffline) ...[
+                                    const SizedBox(width: 6),
+                                    const Icon(Icons.bolt_rounded, size: 13, color: Color(0xFFFFD700)),
+                                    const SizedBox(width: 1),
+                                    const Text('Офлайн', style: TextStyle(color: Color(0xFFFFD700), fontSize: 10, fontWeight: FontWeight.bold)),
+                                  ],
                                 ],
-                              ],
+                              ),
                             ),
+                            // Компактний блок кнопок: ⚡ Блискавка + ⬇️ Скачати + ▶️ Play
                             trailing: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 // 1. БЛИСКАВКА ⚡ (Офлайн прослуховування)
                                 if (offlineP != null)
                                   Padding(
-                                    padding: const EdgeInsets.all(8.0),
+                                    padding: const EdgeInsets.all(4.0),
                                     child: SizedBox(
-                                      width: 22,
-                                      height: 22,
+                                      width: 20,
+                                      height: 20,
                                       child: CircularProgressIndicator(
                                         value: offlineP > 0 ? offlineP : null,
-                                        strokeWidth: 2.5,
+                                        strokeWidth: 2.2,
                                         color: const Color(0xFFFFD700),
                                       ),
                                     ),
                                   )
                                 else
                                   IconButton(
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                                    visualDensity: VisualDensity.compact,
                                     tooltip: isSavedOffline ? 'Збережено в офлайн (блискавка ⚡)' : 'Додати в офлайн (блискавка ⚡)',
                                     icon: Icon(
                                       isSavedOffline
@@ -939,7 +1096,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
                                       color: isSavedOffline
                                           ? const Color(0xFFFFD700)
                                           : Colors.white38,
-                                      size: 24,
+                                      size: 23,
                                     ),
                                     onPressed: () => _toggleSaveOffline(track),
                                   ),
@@ -947,10 +1104,10 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
                                 // 2. ЗАВАНТАЖИТИ ⬇️ (Файл MP3 на телефон)
                                 if (fileP != null)
                                   Padding(
-                                    padding: const EdgeInsets.all(8.0),
+                                    padding: const EdgeInsets.all(4.0),
                                     child: SizedBox(
-                                      width: 20,
-                                      height: 20,
+                                      width: 18,
+                                      height: 18,
                                       child: CircularProgressIndicator(
                                         value: fileP > 0 ? fileP : null,
                                         strokeWidth: 2.0,
@@ -960,17 +1117,25 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
                                   )
                                 else
                                   IconButton(
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                                    visualDensity: VisualDensity.compact,
                                     tooltip: 'Завантажити файл на телефон',
                                     icon: const Icon(
                                       Icons.download_rounded,
                                       color: Color(0xFF00BFFF),
-                                      size: 22,
+                                      size: 21,
                                     ),
                                     onPressed: () => _downloadTrackFile(track),
                                   ),
 
-                                // 3. PLAY / PAUSE
+                                const SizedBox(width: 2),
+
+                                // 3. PLAY / PAUSE КНОПКА ▶️
                                 IconButton(
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+                                  visualDensity: VisualDensity.compact,
                                   icon: Icon(
                                     isSelected && isPlaying
                                         ? Icons.pause_circle_filled_rounded
@@ -978,7 +1143,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
                                     color: isSelected
                                         ? const Color(0xFF00BFFF)
                                         : const Color(0xFFFFD700),
-                                    size: 32,
+                                    size: 30,
                                   ),
                                   onPressed: () {
                                     if (isSelected) {
