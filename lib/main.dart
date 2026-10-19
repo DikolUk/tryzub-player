@@ -125,6 +125,20 @@ class TryzubApp extends StatelessWidget {
           onPrimary: Colors.black,
           onSurface: Colors.white,
         ),
+        snackBarTheme: SnackBarThemeData(
+          backgroundColor: const Color(0xFF16243A),
+          contentTextStyle: const TextStyle(
+            color: Colors.white,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+          actionTextColor: const Color(0xFFFFD700),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: const BorderSide(color: Color(0xFF00BFFF), width: 1.2),
+          ),
+        ),
         fontFamily: 'Roboto',
       ),
       home: const MainPlayerScreen(),
@@ -380,6 +394,49 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
     }
   }
 
+  void _showNotification(
+    String text, {
+    IconData icon = Icons.check_circle_rounded,
+    Color iconColor = const Color(0xFF22C55E),
+  }) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.clearSnackBars();
+    messenger.showSnackBar(
+      SnackBar(
+        backgroundColor: const Color(0xFF16243A),
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        duration: const Duration(seconds: 3),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: iconColor.withValues(alpha: 0.8), width: 1.5),
+        ),
+        content: Row(
+          children: [
+            Icon(icon, color: iconColor, size: 22),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                text,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted) {
+        messenger.hideCurrentSnackBar();
+      }
+    });
+  }
+
   // ==========================================================================
   // БЛИСКАВКА ⚡ — ЗБЕРЕГТИ В ОФЛАЙН (КЕШ ДЛЯ ПРОСЛУХОВУВАННЯ БЕЗ ІНТЕРНЕТУ)
   // ==========================================================================
@@ -410,8 +467,10 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
                   await OfflineManager.instance.deleteTrackOffline(track.id);
                   if (mounted) {
                     setState(() => _applyFilter());
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Трек «${track.title}» видалено з офлайну')),
+                    _showNotification(
+                      'Трек «${track.title}» видалено з офлайну',
+                      icon: Icons.delete_outline_rounded,
+                      iconColor: Colors.orangeAccent,
                     );
                   }
                 },
@@ -438,31 +497,21 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
       });
 
       if (ok) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: const Color(0xFF102820),
-            content: Row(
-              children: [
-                const Icon(Icons.bolt_rounded, color: Color(0xFFFFD700)),
-                const SizedBox(width: 8),
-                Expanded(child: Text('⚡ «${track.title}» додано в офлайн!')),
-              ],
-            ),
-          ),
+        _showNotification(
+          '⚡ «${track.title}» додано в офлайн!',
+          icon: Icons.bolt_rounded,
+          iconColor: const Color(0xFFFFD700),
         );
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              ApiService.isAuthenticated
-                  ? 'Помилка збереження в офлайн'
-                  : 'Для повного доступу увійдіть у свій акаунт!',
-            ),
-            action: ApiService.isAuthenticated
-                ? null
-                : SnackBarAction(label: 'Увійти', onPressed: _showAuthModal),
-          ),
-        );
+        if (!ApiService.isAuthenticated) {
+          _showAuthModal();
+        } else {
+          _showNotification(
+            'Помилка збереження в офлайн',
+            icon: Icons.error_outline_rounded,
+            iconColor: Colors.redAccent,
+          );
+        }
       }
     }
   }
@@ -493,20 +542,16 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
     if (mounted) {
       setState(() => _fileDownloadProgress.remove(track.id));
       if (path != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: const Color(0xFF0D2538),
-            content: Text('Трек «${track.title}» успішно завантажено!'),
-            action: SnackBarAction(
-              label: 'Поділитися',
-              textColor: const Color(0xFF00BFFF),
-              onPressed: () => Share.shareXFiles([XFile(path)], text: 'Тризуб МС — ${track.title}'),
-            ),
-          ),
+        _showNotification(
+          'Трек «${track.title}» успішно завантажено!',
+          icon: Icons.download_done_rounded,
+          iconColor: const Color(0xFF00BFFF),
         );
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Не вдалося завантажити трек')),
+        _showNotification(
+          'Не вдалося завантажити трек',
+          icon: Icons.error_outline_rounded,
+          iconColor: Colors.redAccent,
         );
       }
     }
@@ -577,9 +622,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
                       tooltip: 'Скопіювати номер картки',
                       onPressed: () {
                         Clipboard.setData(const ClipboardData(text: '4323347361117044'));
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Номер картки 4323 3473 6111 7044 скопійовано!')),
-                        );
+                        _showNotification('Номер картки 4323 3473 6111 7044 скопійовано!');
                       },
                     ),
                   ],
@@ -686,9 +729,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
         ),
       );
     } else if (manual) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('У вас встановлено найновішу версію застосунку (v2.4)!')),
-      );
+      _showNotification('У вас встановлено найновішу версію застосунку (v2.4)!');
     }
   }
 
@@ -709,9 +750,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
           onSuccess: () {
             if (mounted) {
               setState(() {});
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Вхід виконано успішно!')),
-              );
+              _showNotification('Вхід виконано успішно!');
             }
           },
         );
@@ -1083,7 +1122,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
                                     onPressed: () => _toggleSaveOffline(track),
                                   ),
 
-                                // 2. ЗАВАНТАЖИТИ ⬇️ (Файл MP3 на телефон)
+                                // 2. ЗАВАНТАЖИТИ ⬇️
                                 if (fileP != null)
                                   Padding(
                                     padding: const EdgeInsets.all(4.0),
@@ -1102,7 +1141,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
                                     padding: EdgeInsets.zero,
                                     constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                                     visualDensity: VisualDensity.compact,
-                                    tooltip: 'Завантажити файл на телефон',
+                                    tooltip: 'Завантажити',
                                     icon: const Icon(
                                       Icons.download_rounded,
                                       color: Color(0xFF00BFFF),
@@ -1503,12 +1542,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
                           tooltip: 'Скопіювати номер картки',
                           onPressed: () {
                             Clipboard.setData(const ClipboardData(text: '4323347361117044'));
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                backgroundColor: Color(0xFF102820),
-                                content: Text('✓ Номер картки 4323 3473 6111 7044 скопійовано!'),
-                              ),
-                            );
+                            _showNotification('Номер картки 4323 3473 6111 7044 скопійовано!');
                           },
                         ),
                       ],

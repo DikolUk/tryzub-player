@@ -437,13 +437,25 @@ class ApiService {
       final total = response.contentLength ?? 0;
       int received = 0;
 
-      final dir = await getApplicationDocumentsDirectory();
-      final targetDir = Directory('${dir.path}/Tryzub_Music');
+      Directory? baseDir;
+      try {
+        if (!kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS)) {
+          baseDir = await getDownloadsDirectory();
+        }
+      } catch (_) {}
+      baseDir ??= await getApplicationDocumentsDirectory();
+
+      final targetDir = (!kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS))
+          ? baseDir
+          : Directory('${baseDir.path}/Tryzub_Music');
       if (!targetDir.existsSync()) {
         targetDir.createSync(recursive: true);
       }
 
-      final fileName = track.fileName.isNotEmpty ? track.fileName : 'track_${track.id}.mp3';
+      final safeTitle = track.title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
+      final fileName = safeTitle.isNotEmpty
+          ? 'Тризуб МС - $safeTitle.mp3'
+          : (track.fileName.isNotEmpty ? track.fileName : 'track_${track.id}.mp3');
       final file = File('${targetDir.path}/$fileName');
       final sink = file.openWrite();
 
