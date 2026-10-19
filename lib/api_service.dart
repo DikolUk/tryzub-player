@@ -192,6 +192,22 @@ class ApiService {
         return list.map((e) => TrackModel.fromJson(e as Map<String, dynamic>)).toList();
       } catch (_) {}
     }
+
+    // Fallback: перевіряємо локальний кеш зі старого плеєра (~/.config/tryzub-player/tracks_cache.json)
+    try {
+      final home = Platform.environment['HOME'] ?? '';
+      final legacyCache = File('$home/.config/tryzub-player/tracks_cache.json');
+      if (await legacyCache.exists()) {
+        final content = await legacyCache.readAsString();
+        final list = jsonDecode(content) as List;
+        final tracks = list.map((e) => TrackModel.fromJson(e as Map<String, dynamic>)).toList();
+        if (tracks.isNotEmpty) {
+          await prefs.setString('cached_tracks_json', content);
+          return tracks;
+        }
+      }
+    } catch (_) {}
+
     return [];
   }
 
