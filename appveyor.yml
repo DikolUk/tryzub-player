@@ -18,7 +18,12 @@ build_script:
       $env:PATH = "C:\flutter\bin;$env:PATH"
       flutter build windows --release
       7z a TryzubApp-Windows.zip .\build\windows\x64\runner\Release\*
+      if (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe") {
+        & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" windows\installer.iss
+      }
 
 artifacts:
+  - path: TryzubPlayerSetup.exe
+    name: TryzubPlayerSetup.exe
   - path: TryzubApp-Windows.zip
-    name: TryzubApp-Windows
+    name: TryzubApp-Windows.zip
