@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -9,7 +10,7 @@ class TrackModel {
   final String title;
   final String artist;
   final String fileName;
-  final String coverImage;
+  final String? coverImage;
   final int playCount;
   final int downloadCount;
   final String createdAt;
@@ -19,7 +20,7 @@ class TrackModel {
     required this.title,
     required this.artist,
     required this.fileName,
-    required this.coverImage,
+    this.coverImage,
     required this.playCount,
     required this.downloadCount,
     required this.createdAt,
@@ -27,13 +28,13 @@ class TrackModel {
 
   factory TrackModel.fromJson(Map<String, dynamic> json) {
     return TrackModel(
-      id: json['id'] as int? ?? 0,
+      id: json['id'] is int ? json['id'] as int : int.tryParse(json['id']?.toString() ?? '0') ?? 0,
       title: json['title'] as String? ?? 'Без назви',
       artist: json['artist'] as String? ?? 'Тризуб МС',
       fileName: json['file_name'] as String? ?? '',
-      coverImage: json['cover_image'] as String? ?? '',
-      playCount: json['play_count'] as int? ?? 0,
-      downloadCount: json['download_count'] as int? ?? 0,
+      coverImage: json['cover_image'] as String?,
+      playCount: json['play_count'] is int ? json['play_count'] as int : int.tryParse(json['play_count']?.toString() ?? '0') ?? 0,
+      downloadCount: json['download_count'] is int ? json['download_count'] as int : int.tryParse(json['download_count']?.toString() ?? '0') ?? 0,
       createdAt: json['created_at'] as String? ?? '',
     );
   }
@@ -50,7 +51,7 @@ class TrackModel {
       };
 
   String get coverUrl {
-    if (coverImage.isEmpty) {
+    if (coverImage == null || coverImage!.isEmpty) {
       return 'https://tryzubmc-official.top/logo.jpg';
     }
     return 'https://tryzubmc-official.top/uploads/covers/$coverImage';
@@ -82,15 +83,17 @@ class UserProfileModel {
 
   factory UserProfileModel.fromJson(Map<String, dynamic> json) {
     return UserProfileModel(
-      id: json['id'] as int? ?? 0,
+      id: json['id'] is int ? json['id'] as int : int.tryParse(json['id']?.toString() ?? '0') ?? 0,
       username: json['username'] as String? ?? '',
       email: json['email'] as String? ?? '',
       plan: json['plan'] as String? ?? 'free',
       isUnlimited: json['is_unlimited'] as bool? ?? false,
-      weeklyLimit: json['weekly_limit'] as int? ?? 5,
-      weeklyCount: json['weekly_count'] as int? ?? 0,
-      remainingDownloads: json['remaining_downloads'] as int? ?? 5,
-      daysUntilReset: json['days_until_reset'] as int? ?? 7,
+      weeklyLimit: json['weekly_limit'] is int ? json['weekly_limit'] as int : int.tryParse(json['weekly_limit']?.toString() ?? '5') ?? 5,
+      weeklyCount: json['weekly_count'] is int ? json['weekly_count'] as int : int.tryParse(json['weekly_count']?.toString() ?? '0') ?? 0,
+      remainingDownloads: json['remaining_downloads'] is int
+          ? (json['remaining_downloads'] as int)
+          : int.tryParse(json['remaining_downloads']?.toString() ?? '0') ?? 0,
+      daysUntilReset: json['days_until_reset'] is int ? json['days_until_reset'] as int : int.tryParse(json['days_until_reset']?.toString() ?? '0') ?? 0,
     );
   }
 }
@@ -105,10 +108,21 @@ class ApiService {
   static String? get token => _token;
   static bool get isAuthenticated => _token != null && _token!.isNotEmpty;
 
+  static String get deviceName {
+    if (kIsWeb) return 'Web Client';
+    if (Platform.isIOS) return 'iOS App';
+    if (Platform.isAndroid) return 'Android App';
+    if (Platform.isWindows) return 'Windows Player';
+    if (Platform.isMacOS) return 'macOS App';
+    if (Platform.isLinux) return 'Linux App';
+    return 'Official Client';
+  }
+
   static Map<String, String> get _headers => {
         'User-Agent': 'TryzubPlayer-Multiplatform/$appVersion',
         'X-App-Version': appVersion,
         'Accept': 'application/json',
+        'Content-Type': 'application/json; charset=utf-8',
         if (_token != null && _token!.isNotEmpty) ...{
           'Authorization': 'Bearer $_token',
           'X-App-Token': _token!,
@@ -131,17 +145,27 @@ class ApiService {
   }
 
   static Future<void> logout() async {
+    if (_token != null) {
+      try {
+        final uri = Uri.parse('$baseUrl/api/app_auth.php');
+        await http.post(
+          uri,
+          headers: _headers,
+          body: jsonEncode({'action': 'logout', 'token': _token}),
+        ).timeout(const Duration(seconds: 4));
+      } catch (_) {}
+    }
     _token = null;
     currentUser = null;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('tryzub_auth_token');
   }
 
-  /// Отримання списку всіх 120 треків з кешуванням для офлайн-режиму
+  /// Отримання списку треків
   static Future<List<TrackModel>> getTracks() async {
     final uri = Uri.parse('$baseUrl/api/tracks.php');
     try {
-      final res = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 8));
+      final res = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 10));
       if (res.statusCode == 200) {
         final decoded = jsonDecode(res.body);
         List<dynamic> list = [];
@@ -153,7 +177,6 @@ class ApiService {
 
         final tracks = list.map((e) => TrackModel.fromJson(e as Map<String, dynamic>)).toList();
         if (tracks.isNotEmpty) {
-          // Зберігаємо в локальний кеш
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('cached_tracks_json', jsonEncode(list));
           return tracks;
@@ -161,7 +184,6 @@ class ApiService {
       }
     } catch (_) {}
 
-    // Fallback до локального кешу
     final prefs = await SharedPreferences.getInstance();
     final cached = prefs.getString('cached_tracks_json');
     if (cached != null) {
@@ -173,27 +195,173 @@ class ApiService {
     return [];
   }
 
-  /// Посилання на потокове відтворення (аудіо стрім)
+  /// Посилання на аудіо стрім
   static String getStreamUrl(int trackId) {
     final t = _token ?? '';
     return '$baseUrl/stream.php?id=$trackId&token=$t';
   }
 
-  /// Вхід за логіном і паролем
+  /// Вхід за логіном і паролем (з підтримкою 2FA)
   static Future<Map<String, dynamic>> login(String username, String password) async {
     final uri = Uri.parse('$baseUrl/api/app_auth.php');
     try {
       final res = await http.post(
         uri,
         headers: _headers,
-        body: {
+        body: jsonEncode({
           'action': 'login',
           'login': username,
           'username': username,
           'password': password,
-          'device_name': 'Tryzub Multiplatform Player',
-        },
+          'device_name': deviceName,
+        }),
+      ).timeout(const Duration(seconds: 12));
+
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      if (data['success'] == true && data['token'] != null) {
+        await saveToken(data['token'].toString());
+      }
+      return data;
+    } catch (e) {
+      return {'success': false, 'error': 'Помилка мережі: $e'};
+    }
+  }
+
+  /// Перевірка 2FA коду
+  static Future<Map<String, dynamic>> check2FA(String code) async {
+    final uri = Uri.parse('$baseUrl/api/app_auth.php');
+    try {
+      final res = await http.post(
+        uri,
+        headers: _headers,
+        body: jsonEncode({
+          'action': 'check_2fa',
+          'code': code,
+          'device_name': deviceName,
+        }),
       ).timeout(const Duration(seconds: 10));
+
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      if (data['status'] == 'approved' && data['token'] != null) {
+        await saveToken(data['token'].toString());
+      }
+      return data;
+    } catch (e) {
+      return {'success': false, 'error': e.toString()};
+    }
+  }
+
+  /// Скасування очікування 2FA
+  static Future<void> cancel2FA(String code) async {
+    final uri = Uri.parse('$baseUrl/api/app_auth.php');
+    try {
+      await http.post(
+        uri,
+        headers: _headers,
+        body: jsonEncode({'action': 'cancel_2fa', 'code': code}),
+      ).timeout(const Duration(seconds: 5));
+    } catch (_) {}
+  }
+
+  /// Початок авторизації через Telegram-бота
+  static Future<Map<String, dynamic>> tgStart() async {
+    final uri = Uri.parse('$baseUrl/api/app_auth.php');
+    try {
+      final res = await http.post(
+        uri,
+        headers: _headers,
+        body: jsonEncode({'action': 'tg_start'}),
+      ).timeout(const Duration(seconds: 10));
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    } catch (e) {
+      return {'success': false, 'error': e.toString()};
+    }
+  }
+
+  /// Перевірка статусу авторизації через Telegram
+  static Future<Map<String, dynamic>> tgCheck(String ticketToken) async {
+    final uri = Uri.parse('$baseUrl/api/app_auth.php');
+    try {
+      final res = await http.post(
+        uri,
+        headers: _headers,
+        body: jsonEncode({
+          'action': 'tg_check',
+          'token': ticketToken,
+          'device_name': deviceName,
+        }),
+      ).timeout(const Duration(seconds: 10));
+
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      if (data['status'] == 'approved' && data['token'] != null) {
+        await saveToken(data['token'].toString());
+      }
+      return data;
+    } catch (e) {
+      return {'success': false, 'error': e.toString()};
+    }
+  }
+
+  /// Початок авторизації через Google
+  static Future<Map<String, dynamic>> googleStart() async {
+    final uri = Uri.parse('$baseUrl/api/app_auth.php');
+    try {
+      final res = await http.post(
+        uri,
+        headers: _headers,
+        body: jsonEncode({'action': 'google_start'}),
+      ).timeout(const Duration(seconds: 10));
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    } catch (e) {
+      return {'success': false, 'error': e.toString()};
+    }
+  }
+
+  /// Перевірка статусу авторизації через Google
+  static Future<Map<String, dynamic>> googleCheck(String ticketToken) async {
+    final uri = Uri.parse('$baseUrl/api/app_auth.php');
+    try {
+      final res = await http.post(
+        uri,
+        headers: _headers,
+        body: jsonEncode({
+          'action': 'google_check',
+          'token': ticketToken,
+          'device_name': deviceName,
+        }),
+      ).timeout(const Duration(seconds: 10));
+
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      if (data['status'] == 'approved' && data['token'] != null) {
+        await saveToken(data['token'].toString());
+      }
+      return data;
+    } catch (e) {
+      return {'success': false, 'error': e.toString()};
+    }
+  }
+
+  /// Реєстрація нового користувача
+  static Future<Map<String, dynamic>> register({
+    required String username,
+    required String email,
+    required String password,
+    required String confirmPassword,
+  }) async {
+    final uri = Uri.parse('$baseUrl/api/app_auth.php');
+    try {
+      final res = await http.post(
+        uri,
+        headers: _headers,
+        body: jsonEncode({
+          'action': 'register',
+          'username': username,
+          'email': email,
+          'password': password,
+          'confirm_password': confirmPassword,
+          'device_name': deviceName,
+        }),
+      ).timeout(const Duration(seconds: 12));
 
       final data = jsonDecode(res.body) as Map<String, dynamic>;
       if (data['success'] == true && data['token'] != null) {
@@ -205,69 +373,7 @@ class ApiService {
     }
   }
 
-  /// Перевірка 2FA (Telegram) коду
-  static Future<Map<String, dynamic>> check2FA(String code) async {
-    final uri = Uri.parse('$baseUrl/api/app_auth.php');
-    try {
-      final res = await http.post(
-        uri,
-        headers: _headers,
-        body: {
-          'action': 'check_2fa',
-          'code': code,
-          'device_name': 'Tryzub Multiplatform Player',
-        },
-      ).timeout(const Duration(seconds: 10));
-
-      final data = jsonDecode(res.body) as Map<String, dynamic>;
-      if (data['success'] == true && data['status'] == 'approved' && data['token'] != null) {
-        await saveToken(data['token'].toString());
-      }
-      return data;
-    } catch (e) {
-      return {'success': false, 'error': e.toString()};
-    }
-  }
-
-  /// Авторизація через Telegram-бота
-  static Future<Map<String, dynamic>> tgStart() async {
-    final uri = Uri.parse('$baseUrl/api/app_auth.php');
-    try {
-      final res = await http.post(
-        uri,
-        headers: _headers,
-        body: {'action': 'tg_start'},
-      ).timeout(const Duration(seconds: 10));
-      return jsonDecode(res.body) as Map<String, dynamic>;
-    } catch (e) {
-      return {'success': false, 'error': e.toString()};
-    }
-  }
-
-  static Future<Map<String, dynamic>> tgCheck(String authTicket) async {
-    final uri = Uri.parse('$baseUrl/api/app_auth.php');
-    try {
-      final res = await http.post(
-        uri,
-        headers: _headers,
-        body: {
-          'action': 'tg_check',
-          'token': authTicket,
-          'device_name': 'Tryzub Multiplatform Player',
-        },
-      ).timeout(const Duration(seconds: 10));
-
-      final data = jsonDecode(res.body) as Map<String, dynamic>;
-      if (data['success'] == true && data['status'] == 'approved' && data['token'] != null) {
-        await saveToken(data['token'].toString());
-      }
-      return data;
-    } catch (e) {
-      return {'success': false, 'error': e.toString()};
-    }
-  }
-
-  /// Оновлення профілю користувача та лімітів
+  /// Оновлення профілю
   static Future<UserProfileModel?> fetchProfile() async {
     if (!isAuthenticated) return null;
     final uri = Uri.parse('$baseUrl/api/app_profile.php?token=${_token!}');
@@ -284,7 +390,7 @@ class ApiService {
     return null;
   }
 
-  /// Інформація про оплату / підписку та реквізити підтримки
+  /// Інформація про оплату / підписку
   static Future<Map<String, dynamic>> getPaymentInfo() async {
     final uri = Uri.parse('$baseUrl/api/payment_info.php');
     try {
@@ -296,14 +402,18 @@ class ApiService {
     return {};
   }
 
-  /// Завантаження MP3 файлу на диск
+  /// Завантаження треку в локальну папку (для експорту або збереження)
   static Future<String?> downloadTrack(TrackModel track, {Function(double)? onProgress}) async {
     final t = _token ?? '';
     final url = '$baseUrl/api/app_download.php?track_id=${track.id}&id=${track.id}&token=$t';
 
     try {
       final req = http.Request('GET', Uri.parse(url));
-      req.headers.addAll(_headers);
+      req.headers.addAll({
+        'User-Agent': 'TryzubPlayer-Multiplatform/$appVersion',
+        'X-App-Version': appVersion,
+        if (_token != null) 'X-App-Token': _token!,
+      });
 
       final response = await http.Client().send(req);
       if (response.statusCode != 200) return null;
@@ -329,8 +439,9 @@ class ApiService {
         }
       }).asFuture();
 
+      await sink.flush();
       await sink.close();
-      await fetchProfile(); // Оновлюємо ліміти завантажень
+      await fetchProfile();
       return file.path;
     } catch (_) {
       return null;
