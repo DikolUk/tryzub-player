@@ -389,13 +389,15 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
         elevation: 0,
         title: Row(
           children: [
-            Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: const Color(0xFF00BFFF).withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.asset(
+                'assets/images/logo.png',
+                width: 34,
+                height: 34,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const Icon(Icons.military_tech_rounded, color: Color(0xFF00BFFF)),
               ),
-              child: const Icon(Icons.military_tech_rounded, color: Color(0xFF00BFFF)),
             ),
             const SizedBox(width: 12),
             const Column(
