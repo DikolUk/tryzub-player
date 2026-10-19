@@ -72,7 +72,7 @@ workflows:
         script: |
           flutter build macos --release
           cd build/macos/Build/Products/Release
-          zip -r -y ../../../../../TryzubApp-macOS.zip TryzubApp.app
+          zip -r -y ../../../../../TryzubApp-macOS.zip *.app
     artifacts:
       - TryzubApp-macOS.zip
 

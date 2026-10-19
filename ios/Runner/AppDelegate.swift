@@ -4,13 +4,15 @@ import MediaPlayer
 import AVFoundation
 
 @main
-@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
+@objc class AppDelegate: FlutterAppDelegate {
   private var methodChannel: FlutterMethodChannel?
 
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    GeneratedPluginRegistrant.register(with: self)
+
     do {
       try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [])
       try AVAudioSession.sharedInstance().setActive(true)
@@ -20,14 +22,16 @@ import AVFoundation
 
     application.beginReceivingRemoteControlEvents()
 
+    if let controller = window?.rootViewController as? FlutterViewController {
+      setupChannel(messenger: controller.binaryMessenger)
+    }
+
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
-  func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
-    GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
-
-    let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "TryzubNowPlayingPlugin")
-    let channel = FlutterMethodChannel(name: "com.tryzubmc.player/nowplaying", binaryMessenger: registrar.messenger())
+  private func setupChannel(messenger: FlutterBinaryMessenger) {
+    if methodChannel != nil { return }
+    let channel = FlutterMethodChannel(name: "com.tryzubmc.player/nowplaying", binaryMessenger: messenger)
     self.methodChannel = channel
 
     channel.setMethodCallHandler { [weak self] (call: FlutterMethodCall, result: @escaping FlutterResult) in
