@@ -587,24 +587,6 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
               ),
               const SizedBox(height: 14),
 
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFFFD700),
-                  foregroundColor: Colors.black,
-                  minimumSize: const Size.fromHeight(42),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                ),
-                icon: const Icon(Icons.open_in_browser_rounded),
-                label: const Text('Оплатити на сайті (payment.php)', style: TextStyle(fontWeight: FontWeight.bold)),
-                onPressed: () async {
-                  final uri = Uri.parse('https://tryzubmc-official.top/payment.php');
-                  if (await canLaunchUrl(uri)) {
-                    await launchUrl(uri, mode: LaunchMode.externalApplication);
-                  }
-                },
-              ),
-              const SizedBox(height: 8),
-
               OutlinedButton.icon(
                 style: OutlinedButton.styleFrom(
                   foregroundColor: const Color(0xFF00BFFF),
