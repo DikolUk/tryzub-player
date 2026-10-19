@@ -81,11 +81,11 @@ void main() async {
       AudioContext(
         iOS: AudioContextIOS(
           category: AVAudioSessionCategory.playback,
-          options: [
+          options: {
             AVAudioSessionOptions.defaultToSpeaker,
             AVAudioSessionOptions.allowAirPlay,
             AVAudioSessionOptions.allowBluetooth,
-          ],
+          },
         ),
         android: AudioContextAndroid(
           isSpeakerphoneOn: false,
