@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -68,13 +69,18 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
   bool _isShuffle = false;
   bool _isRepeat = false;
 
-  final Map<int, double> _downloadProgress = {};
+  final Map<int, double> _offlineCacheProgress = {};
+  final Map<int, double> _fileDownloadProgress = {};
 
   @override
   void initState() {
     super.initState();
     _initAudioListeners();
     _loadTracks();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkForUpdates(manual: false);
+    });
   }
 
   void _initAudioListeners() {
@@ -228,10 +234,12 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
     }
   }
 
+  // ==========================================================================
+  // БЛИСКАВКА ⚡ — ЗБЕРЕГТИ В ОФЛАЙН (КЕШ ДЛЯ ПРОСЛУХОВУВАННЯ БЕЗ ІНТЕРНЕТУ)
+  // ==========================================================================
   Future<void> _toggleSaveOffline(TrackModel track) async {
     final isSaved = OfflineManager.instance.isTrackSaved(track.id);
     if (isSaved) {
-      // Показуємо вибір: видалити чи поділитися
       showModalBottomSheet(
         context: context,
         backgroundColor: const Color(0xFF0F172A),
@@ -250,7 +258,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
               ),
               ListTile(
                 leading: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent),
-                title: const Text('Видалити з памʼяті пристрою'),
+                title: const Text('Видалити з офлайн-памʼяті'),
                 onTap: () async {
                   Navigator.pop(ctx);
                   await OfflineManager.instance.deleteTrackOffline(track.id);
@@ -269,18 +277,17 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
       return;
     }
 
-    // Зберігаємо трек в офлайн
-    setState(() => _downloadProgress[track.id] = 0.01);
+    setState(() => _offlineCacheProgress[track.id] = 0.01);
     final ok = await OfflineManager.instance.saveTrackOffline(
       track,
       onProgress: (p) {
-        if (mounted) setState(() => _downloadProgress[track.id] = p);
+        if (mounted) setState(() => _offlineCacheProgress[track.id] = p);
       },
     );
 
     if (mounted) {
       setState(() {
-        _downloadProgress.remove(track.id);
+        _offlineCacheProgress.remove(track.id);
         _applyFilter();
       });
 
@@ -290,9 +297,9 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
             backgroundColor: const Color(0xFF102820),
             content: Row(
               children: [
-                const Icon(Icons.offline_pin_rounded, color: Colors.greenAccent),
+                const Icon(Icons.bolt_rounded, color: Color(0xFFFFD700)),
                 const SizedBox(width: 8),
-                Expanded(child: Text('«${track.title}» збережено для офлайн-прослуховування!')),
+                Expanded(child: Text('⚡ «${track.title}» додано в офлайн!')),
               ],
             ),
           ),
@@ -302,7 +309,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
           SnackBar(
             content: Text(
               ApiService.isAuthenticated
-                  ? 'Помилка завантаження'
+                  ? 'Помилка збереження в офлайн'
                   : 'Для повного доступу увійдіть у свій акаунт!',
             ),
             action: ApiService.isAuthenticated
@@ -315,7 +322,250 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
   }
 
   // ==========================================================================
-  // МОДАЛЬНЕ ВІКНО АВТОРИЗАЦІЇ (ЛОГІН, 2FA, TELEGRAM, GOOGLE)
+  // СКАЧУВАННЯ MP3 ФАЙЛУ НА ПРИСТРІЙ (З ПЕРЕВІРКОЮ ТАРИФУ БЕЗЛІМ)
+  // ==========================================================================
+  Future<void> _downloadTrackFile(TrackModel track) async {
+    if (!ApiService.isAuthenticated) {
+      _showAuthModal();
+      return;
+    }
+
+    final user = ApiService.currentUser;
+    if (user != null && !user.isUnlimited && user.remainingDownloads <= 0) {
+      _showUnlimitedUpgradeDialog();
+      return;
+    }
+
+    setState(() => _fileDownloadProgress[track.id] = 0.01);
+    final path = await ApiService.downloadTrack(
+      track,
+      onProgress: (p) {
+        if (mounted) setState(() => _fileDownloadProgress[track.id] = p);
+      },
+    );
+
+    if (mounted) {
+      setState(() => _fileDownloadProgress.remove(track.id));
+      if (path != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFF0D2538),
+            content: Text('Трек «${track.title}» успішно завантажено!'),
+            action: SnackBarAction(
+              label: 'Поділитися',
+              textColor: const Color(0xFF00BFFF),
+              onPressed: () => Share.shareXFiles([XFile(path)], text: 'Тризуб МС — ${track.title}'),
+            ),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Не вдалося завантажити трек')),
+        );
+      }
+    }
+  }
+
+  // ==========================================================================
+  // МОДАЛЬНЕ ВІКНО «КУПИТИ БЕЗЛІМ» (ЯК НА САЙТІ ТА В ANDROID/WINDOWS)
+  // ==========================================================================
+  void _showUnlimitedUpgradeDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF101726),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: const BorderSide(color: Color(0xFFFFD700), width: 1.5),
+        ),
+        title: const Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text('👑 ТАРИФ БЕЗЛІМ', style: TextStyle(color: Color(0xFFFFD700), fontWeight: FontWeight.bold, fontSize: 20)),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('200 грн · назавжди', style: TextStyle(color: Color(0xFF22C55E), fontSize: 16, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 14),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF182236),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('✓ Необмежене завантаження всіх треків', style: TextStyle(color: Colors.white, fontSize: 13)),
+                    SizedBox(height: 6),
+                    Text('✓ Зняття щотижневого ліміту 5 треків', style: TextStyle(color: Colors.white, fontSize: 13)),
+                    SizedBox(height: 6),
+                    Text('✓ Повна дискографія «Тризуб МС» в 1 клік', style: TextStyle(color: Colors.white, fontSize: 13)),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text('Реквізити для оплати (прямий переказ):', style: TextStyle(color: Colors.white70, fontSize: 13)),
+              const SizedBox(height: 8),
+
+              // Номер картки
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0B101E),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFF00BFFF).withValues(alpha: 0.5)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      '4323 3473 6111 7044',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 1.2, color: Color(0xFFFFD700)),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.copy_rounded, color: Color(0xFF00BFFF), size: 20),
+                      tooltip: 'Скопіювати номер картки',
+                      onPressed: () {
+                        Clipboard.setData(const ClipboardData(text: '4323347361117044'));
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Номер картки 4323 3473 6111 7044 скопійовано!')),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFFFD700),
+                  foregroundColor: Colors.black,
+                  minimumSize: const Size.fromHeight(42),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                icon: const Icon(Icons.open_in_browser_rounded),
+                label: const Text('Оплатити на сайті (payment.php)', style: TextStyle(fontWeight: FontWeight.bold)),
+                onPressed: () async {
+                  final uri = Uri.parse('https://tryzubmc-official.top/payment.php');
+                  if (await canLaunchUrl(uri)) {
+                    await launchUrl(uri, mode: LaunchMode.externalApplication);
+                  }
+                },
+              ),
+              const SizedBox(height: 8),
+
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF00BFFF),
+                  side: const BorderSide(color: Color(0xFF00BFFF)),
+                  minimumSize: const Size.fromHeight(42),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                icon: const Icon(Icons.send_rounded, size: 16),
+                label: const Text('Підтвердити в Telegram (@tryzub_mc_bot)'),
+                onPressed: () async {
+                  final uri = Uri.parse('https://t.me/tryzub_mc_bot');
+                  if (await canLaunchUrl(uri)) {
+                    await launchUrl(uri, mode: LaunchMode.externalApplication);
+                  }
+                },
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Закрити')),
+        ],
+      ),
+    );
+  }
+
+  // ==========================================================================
+  // СИСТЕМА ОНОВЛЕНЬ ЗАСТОСУНКУ (ЯК У СТАРИХ ДОДАТКАХ)
+  // ==========================================================================
+  Future<void> _checkForUpdates({required bool manual}) async {
+    final info = await ApiService.checkAppVersion();
+    if (!mounted) return;
+
+    if (info != null && info.hasUpdate) {
+      showDialog(
+        context: context,
+        barrierDismissible: !info.isMandatory,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF10172A),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+            side: const BorderSide(color: Color(0xFF00BFFF), width: 1.5),
+          ),
+          title: Row(
+            children: [
+              const Icon(Icons.system_update_rounded, color: Color(0xFF00BFFF)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Оновлення v${info.serverVersion}',
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                ),
+              ),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Доступна нова версія ${info.serverVersion}! (Ваша версія: ${info.currentVersion})',
+                  style: const TextStyle(color: Colors.white70, fontSize: 13),
+                ),
+                if (info.changelog.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  const Text('Що нового:', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFFFD700), fontSize: 13)),
+                  const SizedBox(height: 6),
+                  ...info.changelog.map((c) => Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Text('• $c', style: const TextStyle(fontSize: 12, color: Colors.white60)),
+                      )),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            if (!info.isMandatory)
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Пізніше', style: TextStyle(color: Colors.white60)),
+              ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF00BFFF),
+                foregroundColor: Colors.black,
+              ),
+              onPressed: () async {
+                final uri = Uri.parse(info.downloadUrl);
+                if (await canLaunchUrl(uri)) {
+                  await launchUrl(uri, mode: LaunchMode.externalApplication);
+                }
+              },
+              child: const Text('Оновити зараз', style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+      );
+    } else if (manual) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('У вас встановлено найновішу версію застосунку (v2.4)!')),
+      );
+    }
+  }
+
+  // ==========================================================================
+  // МОДАЛЬНЕ ВІКНО АВТОРИЗАЦІЇ
   // ==========================================================================
   void _showAuthModal() {
     final userCtrl = TextEditingController();
@@ -429,9 +679,9 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
                   icon: Badge(
                     label: Text('${OfflineManager.instance.savedTracks.length}'),
                     isLabelVisible: OfflineManager.instance.savedTracks.isNotEmpty,
-                    child: const Icon(Icons.offline_pin_outlined),
+                    child: const Icon(Icons.bolt_outlined),
                   ),
-                  selectedIcon: const Icon(Icons.offline_pin_rounded, color: Colors.greenAccent),
+                  selectedIcon: const Icon(Icons.bolt_rounded, color: Color(0xFFFFD700)),
                   label: const Text('Офлайн'),
                 ),
                 const NavigationRailDestination(
@@ -473,9 +723,9 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
                   icon: Badge(
                     label: Text('${OfflineManager.instance.savedTracks.length}'),
                     isLabelVisible: OfflineManager.instance.savedTracks.isNotEmpty,
-                    child: const Icon(Icons.offline_pin_outlined),
+                    child: const Icon(Icons.bolt_outlined),
                   ),
-                  selectedIcon: const Icon(Icons.offline_pin_rounded, color: Colors.greenAccent),
+                  selectedIcon: const Icon(Icons.bolt_rounded, color: Color(0xFFFFD700)),
                   label: 'Офлайн',
                 ),
                 const NavigationDestination(
@@ -501,11 +751,11 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
             color: const Color(0xFF0F172A),
             child: Row(
               children: [
-                const Icon(Icons.cloud_off_rounded, size: 18, color: Colors.greenAccent),
+                const Icon(Icons.bolt_rounded, size: 20, color: Color(0xFFFFD700)),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Збережено треків: ${OfflineManager.instance.savedTracks.length} (${OfflineManager.instance.getTotalSizeFormatted()})',
+                    'Офлайн треків: ${OfflineManager.instance.savedTracks.length} (${OfflineManager.instance.getTotalSizeFormatted()})',
                     style: const TextStyle(fontSize: 12, color: Colors.white70),
                   ),
                 ),
@@ -566,14 +816,14 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Icon(
-                              isOfflineTab ? Icons.download_for_offline_rounded : Icons.music_off_rounded,
+                              isOfflineTab ? Icons.bolt_rounded : Icons.music_off_rounded,
                               size: 64,
                               color: Colors.white24,
                             ),
                             const SizedBox(height: 16),
                             Text(
                               isOfflineTab
-                                  ? 'У вас ще немає збережених треків.\nНатисніть кнопку ⬇️ біля будь-якого треку, щоб слухати його офлайн!'
+                                  ? 'У вас ще немає збережених треків.\nНатисніть блискавку ⚡ біля будь-якого треку, щоб слухати його офлайн!'
                                   : 'Треків не знайдено',
                               textAlign: TextAlign.center,
                               style: const TextStyle(color: Colors.white60, fontSize: 14),
@@ -589,7 +839,8 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
                         final isSelected = _currentTrack?.id == track.id;
                         final isPlaying = isSelected && _playerState == PlayerState.playing;
                         final isSavedOffline = OfflineManager.instance.isTrackSaved(track.id);
-                        final downloadP = _downloadProgress[track.id];
+                        final offlineP = _offlineCacheProgress[track.id];
+                        final fileP = _fileDownloadProgress[track.id];
 
                         return Container(
                           margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
@@ -655,43 +906,70 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
                                 ),
                                 if (isSavedOffline) ...[
                                   const SizedBox(width: 6),
-                                  const Icon(Icons.offline_pin_rounded, size: 14, color: Colors.greenAccent),
+                                  const Icon(Icons.bolt_rounded, size: 14, color: Color(0xFFFFD700)),
                                   const SizedBox(width: 2),
-                                  const Text('Офлайн', style: TextStyle(color: Colors.greenAccent, fontSize: 11)),
+                                  const Text('Офлайн', style: TextStyle(color: Color(0xFFFFD700), fontSize: 11, fontWeight: FontWeight.bold)),
                                 ],
                               ],
                             ),
                             trailing: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                // Кнопка Офлайн-завантаження
-                                if (downloadP != null)
+                                // 1. БЛИСКАВКА ⚡ (Офлайн прослуховування)
+                                if (offlineP != null)
                                   Padding(
                                     padding: const EdgeInsets.all(8.0),
                                     child: SizedBox(
                                       width: 22,
                                       height: 22,
                                       child: CircularProgressIndicator(
-                                        value: downloadP > 0 ? downloadP : null,
+                                        value: offlineP > 0 ? offlineP : null,
                                         strokeWidth: 2.5,
+                                        color: const Color(0xFFFFD700),
+                                      ),
+                                    ),
+                                  )
+                                else
+                                  IconButton(
+                                    tooltip: isSavedOffline ? 'Збережено в офлайн (блискавка ⚡)' : 'Додати в офлайн (блискавка ⚡)',
+                                    icon: Icon(
+                                      isSavedOffline
+                                          ? Icons.bolt_rounded
+                                          : Icons.bolt_outlined,
+                                      color: isSavedOffline
+                                          ? const Color(0xFFFFD700)
+                                          : Colors.white38,
+                                      size: 24,
+                                    ),
+                                    onPressed: () => _toggleSaveOffline(track),
+                                  ),
+
+                                // 2. ЗАВАНТАЖИТИ ⬇️ (Файл MP3 на телефон)
+                                if (fileP != null)
+                                  Padding(
+                                    padding: const EdgeInsets.all(8.0),
+                                    child: SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                        value: fileP > 0 ? fileP : null,
+                                        strokeWidth: 2.0,
                                         color: const Color(0xFF00BFFF),
                                       ),
                                     ),
                                   )
                                 else
                                   IconButton(
-                                    tooltip: isSavedOffline ? 'Збережено в офлайн (натисніть для опцій)' : 'Зберегти в офлайн',
-                                    icon: Icon(
-                                      isSavedOffline
-                                          ? Icons.offline_pin_rounded
-                                          : Icons.download_rounded,
-                                      color: isSavedOffline
-                                          ? Colors.greenAccent
-                                          : Colors.white60,
+                                    tooltip: 'Завантажити файл на телефон',
+                                    icon: const Icon(
+                                      Icons.download_rounded,
+                                      color: Color(0xFF00BFFF),
+                                      size: 22,
                                     ),
-                                    onPressed: () => _toggleSaveOffline(track),
+                                    onPressed: () => _downloadTrackFile(track),
                                   ),
 
+                                // 3. PLAY / PAUSE
                                 IconButton(
                                   icon: Icon(
                                     isSelected && isPlaying
@@ -817,7 +1095,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
                         ),
                         if (isOffline) ...[
                           const SizedBox(width: 4),
-                          const Icon(Icons.offline_pin_rounded, size: 12, color: Colors.greenAccent),
+                          const Icon(Icons.bolt_rounded, size: 13, color: Color(0xFFFFD700)),
                         ],
                       ],
                     ),
@@ -896,16 +1174,18 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
   }
 
   // ==========================================================================
-  // ВКЛАДКА 3: ПРОФІЛЬ / ПІДТРИМКА
+  // ВКЛАДКА 3: ПРОФІЛЬ / ТАРИФ БЕЗЛІМ / ПІДТРИМКА КАРТКОЮ / ОНОВЛЕННЯ
   // ==========================================================================
   Widget _buildProfileTab() {
     final user = ApiService.currentUser;
+    final isUnlimited = user?.isUnlimited ?? false;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // 1. Інформація користувача
           Card(
             color: const Color(0xFF0F172A),
             elevation: 2,
@@ -928,15 +1208,32 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
                           style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                         ),
                         const SizedBox(height: 4),
-                        Text(
-                          user != null
-                              ? 'Тариф: ${user.plan.toUpperCase()}'
-                              : 'Увійдіть, щоб зняти обмеження прослуховування',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: user != null ? const Color(0xFFFFD700) : Colors.white60,
-                          ),
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: isUnlimited ? const Color(0xFF22C55E).withValues(alpha: 0.2) : const Color(0xFFFFD700).withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                isUnlimited ? '👑 ТАРИФ БЕЗЛІМ' : 'Тариф: FREE (5 треків/тижд)',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  color: isUnlimited ? const Color(0xFF22C55E) : const Color(0xFFFFD700),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
+                        if (user != null && !isUnlimited) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            'Залишилось завантажень: ${user.remainingDownloads}',
+                            style: const TextStyle(fontSize: 11, color: Colors.white54),
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -962,9 +1259,54 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 16),
 
-          // Підтримка артиста / банка Monobank
+          // 2. БЛОК «КУПИТИ БЕЗЛІМ» (якщо не безлім)
+          if (!isUnlimited)
+            Card(
+              color: const Color(0xFF162038),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: const BorderSide(color: Color(0xFFFFD700), width: 1.2),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(18),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Text('👑', style: TextStyle(fontSize: 24)),
+                        SizedBox(width: 8),
+                        Text(
+                          'ТАРИФ БЕЗЛІМ — 200 грн назавжди',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFFFFD700)),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Зніміть будь-які обмеження! Качайте всю дискографію без лімітів 5 треків на тиждень.',
+                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                    const SizedBox(height: 14),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFFFD700),
+                        foregroundColor: Colors.black,
+                        minimumSize: const Size.fromHeight(42),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      onPressed: _showUnlimitedUpgradeDialog,
+                      child: const Text('👑 Отримати БЕЗЛІМ (200 грн)', style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          const SizedBox(height: 16),
+
+          // 3. ПІДТРИМКА ПРОЕКТУ КАРТКОЮ 4323 3473 6111 7044
           Card(
             color: const Color(0xFF0F172A),
             child: Padding(
@@ -974,34 +1316,102 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
                 children: [
                   const Row(
                     children: [
-                      Icon(Icons.favorite_rounded, color: Colors.redAccent),
+                      Icon(Icons.credit_card_rounded, color: Color(0xFF00BFFF)),
                       SizedBox(width: 10),
                       Text(
-                        'Підтримка «Тризуб МС»',
+                        'Підтримка проекту «Тризуб МС»',
                         style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                       ),
                     ],
                   ),
                   const SizedBox(height: 10),
                   const Text(
-                    'Підтримайте створення нових українських військово-патріотичних треків донатом на банку Monobank.',
+                    'Підтримайте створення нових українських військово-патріотичних треків прямим переказом на картку:',
                     style: TextStyle(color: Colors.white70, fontSize: 13),
                   ),
-                  const SizedBox(height: 16),
-                  ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFFFD700),
-                      foregroundColor: Colors.black,
-                      minimumSize: const Size.fromHeight(44),
+                  const SizedBox(height: 14),
+
+                  // Картка з кнопкою швидкого копіювання
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0B101E),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFF00BFFF).withValues(alpha: 0.4)),
                     ),
-                    icon: const Icon(Icons.savings_rounded),
-                    label: const Text('Відкрити банку Monobank', style: TextStyle(fontWeight: FontWeight.bold)),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          '4323 3473 6111 7044',
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1.5,
+                            color: Color(0xFFFFD700),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.copy_rounded, color: Color(0xFF00BFFF)),
+                          tooltip: 'Скопіювати номер картки',
+                          onPressed: () {
+                            Clipboard.setData(const ClipboardData(text: '4323347361117044'));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                backgroundColor: Color(0xFF102820),
+                                content: Text('✓ Номер картки 4323 3473 6111 7044 скопійовано!'),
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF00BFFF),
+                      side: const BorderSide(color: Color(0xFF00BFFF)),
+                      minimumSize: const Size.fromHeight(40),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    icon: const Icon(Icons.send_rounded, size: 16),
+                    label: const Text('Telegram-бот підтримки (@tryzub_mc_bot)'),
                     onPressed: () async {
-                      final uri = Uri.parse('https://send.monobank.ua/jar/3683xHhA5b');
+                      final uri = Uri.parse('https://t.me/tryzub_mc_bot');
                       if (await canLaunchUrl(uri)) {
                         await launchUrl(uri, mode: LaunchMode.externalApplication);
                       }
                     },
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // 4. ОНОВЛЕННЯ ЗАСТОСУНКУ
+          Card(
+            color: const Color(0xFF0F172A),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  const Icon(Icons.info_outline_rounded, color: Colors.white54),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Версія застосунку: 2.4.0', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                        Text('Офіційний мультиплатформний реліз', style: TextStyle(color: Colors.white54, fontSize: 11)),
+                      ],
+                    ),
+                  ),
+                  OutlinedButton(
+                    onPressed: () => _checkForUpdates(manual: true),
+                    child: const Text('Оновлення', style: TextStyle(fontSize: 12)),
                   ),
                 ],
               ),
@@ -1039,7 +1449,7 @@ class _AuthDialogContent extends StatefulWidget {
 
 class _AuthDialogContentState extends State<_AuthDialogContent> {
   bool _isWaiting = false;
-  String _waitType = ''; // '2fa', 'tg', 'google'
+  String _waitType = '';
   String _waitCode = '';
   int _secondsLeft = 180;
   String _waitIcon = '🛡️';

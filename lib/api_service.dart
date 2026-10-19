@@ -447,4 +447,74 @@ class ApiService {
       return null;
     }
   }
+
+  /// Перевірка оновлень застосунку (як у старих застосунках)
+  static Future<AppVersionInfo?> checkAppVersion() async {
+    String os = 'ios';
+    if (!kIsWeb) {
+      if (Platform.isAndroid) os = 'android';
+      if (Platform.isWindows) os = 'windows';
+      if (Platform.isMacOS) os = 'macos';
+      if (Platform.isLinux) os = 'linux';
+    }
+    final uri = Uri.parse('$baseUrl/api/app_version.php?os=$os');
+    try {
+      final res = await http.get(uri).timeout(const Duration(seconds: 5));
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body) as Map<String, dynamic>;
+        if (data['success'] == true) {
+          final srvVer = data['current_version']?.toString() ?? '2.4';
+          final minVer = data['min_version']?.toString() ?? '2.0';
+          final dlUrl = data['download_url']?.toString() ?? 'https://tryzubmc-official.top';
+          final changes = (data['changelog'] as List?)?.map((e) => e.toString()).toList() ?? [];
+
+          final hasUpdate = _isVersionGreater(srvVer, appVersion);
+          final isMandatory = _isVersionGreater(minVer, appVersion);
+
+          return AppVersionInfo(
+            hasUpdate: hasUpdate,
+            isMandatory: isMandatory,
+            currentVersion: appVersion,
+            serverVersion: srvVer,
+            downloadUrl: dlUrl,
+            changelog: changes,
+          );
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  static bool _isVersionGreater(String v1, String v2) {
+    try {
+      final p1 = v1.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+      final p2 = v2.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+      for (int i = 0; i < 3; i++) {
+        final a = i < p1.length ? p1[i] : 0;
+        final b = i < p2.length ? p2[i] : 0;
+        if (a > b) return true;
+        if (a < b) return false;
+      }
+    } catch (_) {}
+    return false;
+  }
 }
+
+class AppVersionInfo {
+  final bool hasUpdate;
+  final bool isMandatory;
+  final String currentVersion;
+  final String serverVersion;
+  final String downloadUrl;
+  final List<String> changelog;
+
+  AppVersionInfo({
+    required this.hasUpdate,
+    required this.isMandatory,
+    required this.currentVersion,
+    required this.serverVersion,
+    required this.downloadUrl,
+    required this.changelog,
+  });
+}
+
