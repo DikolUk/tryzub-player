@@ -42,13 +42,19 @@ android {
         applicationId = "com.tryzubmc.officialmusic"
         minSdk = flutter.minSdkVersion
         targetSdk = 34
-        versionCode = 240
-        versionName = "2.4.0"
+        versionCode = 241
+        versionName = "2.4.1"
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
             isShrinkResources = false
         }
