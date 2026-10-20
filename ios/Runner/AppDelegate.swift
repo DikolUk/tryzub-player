@@ -11,7 +11,7 @@ import AVFoundation
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    let result = super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    GeneratedPluginRegistrant.register(with: self)
 
     do {
       let session = AVAudioSession.sharedInstance()
@@ -29,7 +29,7 @@ import AVFoundation
       setupChannel(messenger: controller.binaryMessenger)
     }
 
-    return result
+    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
   private func setupChannel(messenger: FlutterBinaryMessenger) {
