@@ -35,6 +35,7 @@ android {
             storePassword = keystoreProperties["storePassword"] as String? ?: "tryzub2026"
             enableV1Signing = true
             enableV2Signing = true
+            enableV3Signing = true
         }
     }
 
@@ -54,7 +55,9 @@ android {
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            // Must use the shared release keystore. Debug-signed "release" APKs
+            // fail to install over any previous build (App not installed).
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
             isShrinkResources = false
         }
