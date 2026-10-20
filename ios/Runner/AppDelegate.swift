@@ -11,22 +11,25 @@ import AVFoundation
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    GeneratedPluginRegistrant.register(with: self)
+    let result = super.application(application, didFinishLaunchingWithOptions: launchOptions)
 
     do {
-      try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [])
-      try AVAudioSession.sharedInstance().setActive(true)
+      let session = AVAudioSession.sharedInstance()
+      try session.setCategory(.playback, mode: .default, options: [.allowAirPlay, .allowBluetooth, .defaultToSpeaker])
+      try session.setActive(true)
     } catch {
       print("AVAudioSession error: \(error)")
     }
 
     application.beginReceivingRemoteControlEvents()
 
-    if let controller = window?.rootViewController as? FlutterViewController {
+    if let registrar = self.registrar(forPlugin: "TryzubNowPlayingPlugin") {
+      setupChannel(messenger: registrar.messenger())
+    } else if let controller = (window?.rootViewController ?? (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.windows.first?.rootViewController) as? FlutterViewController {
       setupChannel(messenger: controller.binaryMessenger)
     }
 
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    return result
   }
 
   private func setupChannel(messenger: FlutterBinaryMessenger) {
@@ -57,36 +60,42 @@ import AVFoundation
     let commandCenter = MPRemoteCommandCenter.shared()
 
     commandCenter.playCommand.isEnabled = true
+    commandCenter.playCommand.removeTarget(nil)
     commandCenter.playCommand.addTarget { [weak self] _ in
       self?.methodChannel?.invokeMethod("onRemotePlay", arguments: nil)
       return .success
     }
 
     commandCenter.pauseCommand.isEnabled = true
+    commandCenter.pauseCommand.removeTarget(nil)
     commandCenter.pauseCommand.addTarget { [weak self] _ in
       self?.methodChannel?.invokeMethod("onRemotePause", arguments: nil)
       return .success
     }
 
     commandCenter.togglePlayPauseCommand.isEnabled = true
+    commandCenter.togglePlayPauseCommand.removeTarget(nil)
     commandCenter.togglePlayPauseCommand.addTarget { [weak self] _ in
       self?.methodChannel?.invokeMethod("onRemoteToggle", arguments: nil)
       return .success
     }
 
     commandCenter.nextTrackCommand.isEnabled = true
+    commandCenter.nextTrackCommand.removeTarget(nil)
     commandCenter.nextTrackCommand.addTarget { [weak self] _ in
       self?.methodChannel?.invokeMethod("onRemoteNext", arguments: nil)
       return .success
     }
 
     commandCenter.previousTrackCommand.isEnabled = true
+    commandCenter.previousTrackCommand.removeTarget(nil)
     commandCenter.previousTrackCommand.addTarget { [weak self] _ in
       self?.methodChannel?.invokeMethod("onRemotePrev", arguments: nil)
       return .success
     }
 
     commandCenter.changePlaybackPositionCommand.isEnabled = true
+    commandCenter.changePlaybackPositionCommand.removeTarget(nil)
     commandCenter.changePlaybackPositionCommand.addTarget { [weak self] event in
       if let positionEvent = event as? MPChangePlaybackPositionCommandEvent {
         self?.methodChannel?.invokeMethod("onRemoteSeek", arguments: positionEvent.positionTime)
@@ -105,7 +114,7 @@ import AVFoundation
     if let artist = args["artist"] as? String {
       nowPlayingInfo[MPMediaItemPropertyArtist] = artist
     }
-    if let duration = args["duration"] as? Double {
+    if let duration = args["duration"] as? Double, duration > 0 {
       nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
     }
     if let position = args["position"] as? Double {
@@ -114,7 +123,23 @@ import AVFoundation
     if let isPlaying = args["isPlaying"] as? Bool {
       nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
     }
+    nowPlayingInfo[MPNowPlayingInfoPropertyDefaultPlaybackRate] = 1.0
+
+    if let logo = UIImage(named: "Icon-App-1024x1024@1x") ?? UIImage(named: "AppIcon") {
+      nowPlayingInfo[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: logo.size) { _ in logo }
+    }
 
     MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
+
+    if let coverUrlString = args["coverUrl"] as? String, !coverUrlString.isEmpty, let url = URL(string: coverUrlString) {
+      URLSession.shared.dataTask(with: url) { data, response, error in
+        guard let data = data, let image = UIImage(data: data) else { return }
+        DispatchQueue.main.async {
+          guard var currentInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo else { return }
+          currentInfo[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+          MPNowPlayingInfoCenter.default().nowPlayingInfo = currentInfo
+        }
+      }.resume()
+    }
   }
 }

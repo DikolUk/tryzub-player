@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.tryzub_app"
+    namespace = "com.tryzubmc.officialmusic"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 

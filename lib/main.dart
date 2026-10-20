@@ -53,6 +53,7 @@ class NowPlayingService {
     required Duration duration,
     required Duration position,
     required bool isPlaying,
+    String? coverUrl,
   }) {
     try {
       _channel.invokeMethod('updateNowPlaying', {
@@ -61,6 +62,7 @@ class NowPlayingService {
         'duration': duration.inSeconds.toDouble(),
         'position': position.inSeconds.toDouble(),
         'isPlaying': isPlaying,
+        if (coverUrl != null && coverUrl.isNotEmpty) 'coverUrl': coverUrl,
       });
     } catch (_) {}
   }
@@ -98,8 +100,10 @@ void main() async {
     );
   } catch (_) {}
 
-  await ApiService.initSession();
-  await OfflineManager.instance.init();
+  try {
+    await ApiService.initSession();
+    await OfflineManager.instance.init();
+  } catch (_) {}
   runApp(const TryzubApp());
 }
 
@@ -224,9 +228,14 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
       _syncLockScreen();
     });
 
+    int lastSyncedSec = -1;
     _audioPlayer.onPositionChanged.listen((pos) {
       if (!mounted) return;
       setState(() => _position = pos);
+      if ((pos.inSeconds - lastSyncedSec).abs() >= 1) {
+        lastSyncedSec = pos.inSeconds;
+        _syncLockScreen();
+      }
     });
 
     // Надійна підписка на завершення треку
@@ -243,6 +252,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
         duration: _duration,
         position: _position,
         isPlaying: _playerState == PlayerState.playing,
+        coverUrl: _currentTrack!.coverUrl,
       );
     }
   }
@@ -1460,13 +1470,15 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Row(
-                      children: [
+                    Row(
+                      children: const [
                         Text('👑', style: TextStyle(fontSize: 24)),
                         SizedBox(width: 8),
-                        Text(
-                          'ТАРИФ БЕЗЛІМ — 200 грн назавжди',
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFFFFD700)),
+                        Expanded(
+                          child: Text(
+                            'ТАРИФ БЕЗЛІМ — 200 грн назавжди',
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFFFFD700)),
+                          ),
                         ),
                       ],
                     ),

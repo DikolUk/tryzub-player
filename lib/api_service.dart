@@ -130,11 +130,14 @@ class ApiService {
       };
 
   static Future<void> initSession() async {
-    final prefs = await SharedPreferences.getInstance();
-    _token = prefs.getString('tryzub_auth_token');
-    if (_token != null && _token!.isNotEmpty) {
-      await fetchProfile();
-    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _token = prefs.getString('tryzub_auth_token');
+      if (_token != null && _token!.isNotEmpty) {
+        // Оновлюємо профіль у фоні, щоб не затримувати запуск застосунку на сплеш-скріні
+        fetchProfile().catchError((_) => null);
+      }
+    } catch (_) {}
   }
 
   static Future<void> saveToken(String newToken) async {

@@ -1,4 +1,4 @@
-package com.example.tryzub_app
+package com.tryzubmc.officialmusic
 
 import android.media.MediaMetadata
 import android.media.session.MediaSession
