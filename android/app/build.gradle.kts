@@ -15,7 +15,7 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "com.tryzubmc.officialmusic"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -24,20 +24,26 @@ android {
     }
 
     signingConfigs {
+        getByName("debug") {
+            enableV1Signing = true
+            enableV2Signing = true
+        }
         create("release") {
             keyAlias = keystoreProperties["keyAlias"] as String? ?: "tryzub"
             keyPassword = keystoreProperties["keyPassword"] as String? ?: "tryzub2026"
             storeFile = file(keystoreProperties["storeFile"] as String? ?: "tryzub-release.jks")
             storePassword = keystoreProperties["storePassword"] as String? ?: "tryzub2026"
+            enableV1Signing = true
+            enableV2Signing = true
         }
     }
 
     defaultConfig {
         applicationId = "com.tryzubmc.officialmusic"
         minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
-        versionCode = flutter.versionCode
-        versionName = flutter.versionName
+        targetSdk = 34
+        versionCode = 240
+        versionName = "2.4.0"
     }
 
     buildTypes {
