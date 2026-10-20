@@ -210,7 +210,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
   }
 
   void _initAudioListeners() {
-    _audioPlayer.setReleaseMode(ReleaseMode.stop);
+    _audioPlayer.setReleaseMode(ReleaseMode.release);
 
     _audioPlayer.onPlayerStateChanged.listen((state) {
       if (!mounted) return;
@@ -314,8 +314,6 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
     });
 
     try {
-      await _audioPlayer.stop();
-
       // Якщо трек збережено в офлайн - граємо локальний файл без інтернету!
       if (OfflineManager.instance.isTrackSaved(track.id)) {
         final localPath = OfflineManager.instance.getAudioFilePath(track.id);

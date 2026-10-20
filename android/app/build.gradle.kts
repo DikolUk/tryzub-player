@@ -43,8 +43,8 @@ android {
         applicationId = "com.tryzubmc.player"
         minSdk = flutter.minSdkVersion
         targetSdk = 34
-        versionCode = 243
-        versionName = "2.4.3"
+        versionCode = 244
+        versionName = "2.4.4"
     }
 
     packaging {
