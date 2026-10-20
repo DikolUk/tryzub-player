@@ -217,7 +217,7 @@ class ApiService {
   /// Посилання на аудіо стрім
   static String getStreamUrl(int trackId) {
     final t = _token ?? '';
-    return '$baseUrl/stream.php?id=$trackId&token=$t';
+    return '$baseUrl/stream.php?id=$trackId&token=${Uri.encodeComponent(t)}';
   }
 
   /// Вхід за логіном і паролем (з підтримкою 2FA)

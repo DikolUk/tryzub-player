@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'api_service.dart';
 import 'offline_manager.dart';
+import 'stream_proxy.dart';
 
 // ============================================================================
 // СЕРВІС КЕРУВАННЯ ЗБЛОКОВАНИМ ЕКРАНОМ (NOW PLAYING / LOCK SCREEN CONTROLS)
@@ -103,6 +104,7 @@ void main() async {
   try {
     await ApiService.initSession();
     await OfflineManager.instance.init();
+    await StreamProxy.init();
   } catch (_) {}
   runApp(const TryzubApp());
 }
@@ -322,7 +324,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
           volume: _volume,
         );
       } else {
-        final streamUrl = ApiService.getStreamUrl(track.id);
+        final streamUrl = StreamProxy.getStreamUrl(track.id);
         await _audioPlayer.play(
           UrlSource(streamUrl),
           volume: _volume,
