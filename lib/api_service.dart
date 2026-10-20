@@ -164,11 +164,36 @@ class ApiService {
     await prefs.remove('tryzub_auth_token');
   }
 
-  /// Отримання списку треків
+  /// Швидке миттєве завантаження треків із локального кешу без затримки мережі
+  static Future<List<TrackModel>> getCachedTracks() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cached = prefs.getString('cached_tracks_json');
+      if (cached != null) {
+        final list = jsonDecode(cached) as List;
+        final tracks = list.map((e) => TrackModel.fromJson(e as Map<String, dynamic>)).toList();
+        if (tracks.isNotEmpty) return tracks;
+      }
+    } catch (_) {}
+
+    try {
+      final home = Platform.environment['HOME'] ?? '';
+      final legacyCache = File('$home/.config/tryzub-player/tracks_cache.json');
+      if (await legacyCache.exists()) {
+        final content = await legacyCache.readAsString();
+        final list = jsonDecode(content) as List;
+        return list.map((e) => TrackModel.fromJson(e as Map<String, dynamic>)).toList();
+      }
+    } catch (_) {}
+
+    return [];
+  }
+
+  /// Отримання списку треків із сервера
   static Future<List<TrackModel>> getTracks() async {
     final uri = Uri.parse('$baseUrl/api/tracks.php');
     try {
-      final res = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 10));
+      final res = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 4));
       if (res.statusCode == 200) {
         final decoded = jsonDecode(res.body);
         List<dynamic> list = [];
@@ -187,31 +212,7 @@ class ApiService {
       }
     } catch (_) {}
 
-    final prefs = await SharedPreferences.getInstance();
-    final cached = prefs.getString('cached_tracks_json');
-    if (cached != null) {
-      try {
-        final list = jsonDecode(cached) as List;
-        return list.map((e) => TrackModel.fromJson(e as Map<String, dynamic>)).toList();
-      } catch (_) {}
-    }
-
-    // Fallback: перевіряємо локальний кеш зі старого плеєра (~/.config/tryzub-player/tracks_cache.json)
-    try {
-      final home = Platform.environment['HOME'] ?? '';
-      final legacyCache = File('$home/.config/tryzub-player/tracks_cache.json');
-      if (await legacyCache.exists()) {
-        final content = await legacyCache.readAsString();
-        final list = jsonDecode(content) as List;
-        final tracks = list.map((e) => TrackModel.fromJson(e as Map<String, dynamic>)).toList();
-        if (tracks.isNotEmpty) {
-          await prefs.setString('cached_tracks_json', content);
-          return tracks;
-        }
-      }
-    } catch (_) {}
-
-    return [];
+    return await getCachedTracks();
   }
 
   /// Посилання на аудіо стрім

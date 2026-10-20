@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -282,14 +283,32 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
   }
 
   Future<void> _loadTracks() async {
-    setState(() => _isLoadingTracks = true);
-    final tracks = await ApiService.getTracks();
-    if (mounted) {
+    // 1. Спочатку миттєво показуємо збережений кеш (0 секунд очікування на старті)
+    final cached = await ApiService.getCachedTracks();
+    if (cached.isNotEmpty && mounted) {
       setState(() {
-        _tracks = tracks;
+        _tracks = cached;
         _isLoadingTracks = false;
         _applyFilter();
       });
+    } else {
+      setState(() => _isLoadingTracks = true);
+    }
+
+    // 2. У фоні підвантажуємо свіжий список треків із сервера
+    try {
+      final fresh = await ApiService.getTracks();
+      if (fresh.isNotEmpty && mounted) {
+        setState(() {
+          _tracks = fresh;
+          _isLoadingTracks = false;
+          _applyFilter();
+        });
+      }
+    } catch (_) {}
+
+    if (mounted && _isLoadingTracks) {
+      setState(() => _isLoadingTracks = false);
     }
   }
 
@@ -324,11 +343,27 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> {
           volume: _volume,
         );
       } else {
-        final streamUrl = StreamProxy.getStreamUrl(track.id);
-        await _audioPlayer.play(
-          UrlSource(streamUrl),
-          volume: _volume,
-        );
+        // На Android використовуємо StreamProxy для сумісності з нативним MediaPlayer
+        // На iOS, Windows, Linux, macOS граємо напряму через офіційний URL
+        final primaryUrl = Platform.isAndroid
+            ? StreamProxy.getStreamUrl(track.id)
+            : ApiService.getStreamUrl(track.id);
+
+        try {
+          await _audioPlayer.play(
+            UrlSource(primaryUrl),
+            volume: _volume,
+          );
+        } catch (_) {
+          // Якщо первинний URL дав збій - пробуємо резервний (fallback)
+          final fallbackUrl = Platform.isAndroid
+              ? ApiService.getStreamUrl(track.id)
+              : StreamProxy.getStreamUrl(track.id);
+          await _audioPlayer.play(
+            UrlSource(fallbackUrl),
+            volume: _volume,
+          );
+        }
       }
       _syncLockScreen();
     } catch (e) {
